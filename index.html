@@ -161,7 +161,6 @@
     function removeLayer(i){layers.splice(i,1);renderLayers()}
     function moveUp(i){if(i>0){[layers[i-1],layers[i]]=[layers[i],layers[i-1]];renderLayers()}}
     function moveDown(i){if(i<layers.length-1){[layers[i],layers[i+1]]=[layers[i+1],layers[i]];renderLayers()}}
-    function clearLayers(){layers.length=0;renderLayers()}
 
     /* ---------- Apply encode/decode ---------- */
     function applyEncode(str,l){
@@ -181,7 +180,7 @@
         case"url":return decodeURIComponent(str);
         case"base64":return base64DecodeUTF8(str);
         case"hex":return hexDecodeUTF8(str);
-        case"rot13":return rot13(str);
+                case"rot13":return rot13(str);
         case"caesar":return caesar(str,-(l.params.shift||13));
         case"reverse":return reverseStr(str);
         case"base85":return base85Decode(str);
@@ -189,5 +188,71 @@
       }
     }
 
-    /* ---------- UI wiring ---------- */
- 
+    /* ---------- UI Wiring ---------- */
+    document.addEventListener("DOMContentLoaded",()=>{
+      const input = document.getElementById("input");
+      const output = document.getElementById("output");
+      const errorDiv = document.getElementById("error");
+      const caesarShift = document.getElementById("caesar-shift");
+
+      // Show shift input only for Caesar
+      document.getElementById("layer-select").addEventListener("change",(e)=>{
+        caesarShift.style.display=e.target.value==="caesar"?"inline-block":"none";
+      });
+
+      // Add Layer button
+      document.getElementById("add-layer").addEventListener("click",()=>{
+        const type=document.getElementById("layer-select").value;
+        const params={};
+        if(type==="caesar") params.shift=parseInt(caesarShift.value)||13;
+        addLayer(type,params);
+      });
+
+      // Clear Layers
+      document.getElementById("clear-layers").addEventListener("click",()=>{layers.length=0;renderLayers();});
+
+      // Encode button
+      document.getElementById("encode-btn").addEventListener("click",()=>{
+        try{
+          let txt=input.value;
+          layers.forEach(l=>{txt=applyEncode(txt,l)});
+          output.value=txt;
+          errorDiv.style.display="none";
+        }catch(e){errorDiv.textContent="Error: "+e.message; errorDiv.style.display="block";}
+      });
+
+      // Decode button
+      document.getElementById("decode-btn").addEventListener("click",()=>{
+        try{
+          let txt=input.value;
+          for(let i=layers.length-1;i>=0;i--){txt=applyDecode(txt,layers[i]);}
+          output.value=txt;
+          errorDiv.style.display="none";
+        }catch(e){errorDiv.textContent="Error: "+e.message; errorDiv.style.display="block";}
+      });
+
+      // Copy output
+      document.getElementById("copy-btn").addEventListener("click",()=>{navigator.clipboard.writeText(output.value);});
+
+      // Save as .txt
+      document.getElementById("save-btn").addEventListener("click",()=>{
+        const blob=new Blob([output.value],{type:"text/plain"});
+        const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="output.txt"; a.click();
+      });
+
+      // Presets
+      document.getElementById("preset1").addEventListener("click",()=>{
+        layers.length=0; addLayer("url"); addLayer("base64"); addLayer("hex");
+      });
+      document.getElementById("preset2").addEventListener("click",()=>{
+        layers.length=0; addLayer("rot13"); addLayer("caesar",{shift:5});
+      });
+      document.getElementById("preset3").addEventListener("click",()=>{
+        layers.length=0; addLayer("base64"); addLayer("gzip");
+      });
+
+      renderLayers();
+    });
+  </script>
+</body>
+</html>
