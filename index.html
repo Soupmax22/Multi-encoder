@@ -24,6 +24,7 @@ button,select,input{margin:3px;padding:5px;border-radius:6px;background:#132034;
   <option value="rot13">ROT13</option>
   <option value="caesar">Caesar</option>
   <option value="reverse">Reverse</option>
+  <option value="base85">Base85</option>
 </select>
 <input type="number" id="caesar-shift" value="13" style="width:50px;display:none;">
 <button id="add-layer">Add Layer</button>
@@ -42,7 +43,7 @@ button,select,input{margin:3px;padding:5px;border-radius:6px;background:#132034;
 <h4>Presets</h4>
 <button id="preset1">URL → Base64 → Hex</button>
 <button id="preset2">ROT13 → Caesar(5)</button>
-<button id="preset3">Base64 → Reverse</button>
+<button id="preset3">Base64 → Base85</button>
 </div>
 </div>
 
@@ -86,6 +87,7 @@ document.getElementById("add-layer").addEventListener("click",()=>{
 
 document.getElementById("clear-layers").addEventListener("click",()=>{layers.length=0;renderLayers();});
 
+// Basic encoders
 function encodeBase64(str){return btoa(unescape(encodeURIComponent(str)));}
 function decodeBase64(str){return decodeURIComponent(escape(atob(str)));}
 function encodeHex(str){return Array.from(unescape(encodeURIComponent(str))).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');}
@@ -94,47 +96,66 @@ function rot13(str){return str.replace(/[A-Za-z]/g,c=>{let b=c<='Z'?65:97; retur
 function caesar(str,shift){return str.replace(/[A-Za-z]/g,c=>{let b=c<='Z'?65:97; return String.fromCharCode((c.charCodeAt(0)-b+shift+26)%26+b);});}
 function reverseStr(str){return str.split('').reverse().join('');}
 
-function applyEncode(str,l){
-switch(l.type){
-  case"url": return encodeURIComponent(str);
-  case"base64": return encodeBase64(str);
-  case"hex": return encodeHex(str);
-  case"rot13": return rot13(str);
-  case"caesar": return caesar(str,l.params.shift||13);
-  case"reverse": return reverseStr(str);
+// Base85 (ASCII85)
+function base85Encode(str){
+  const bytes=new TextEncoder().encode(str);
+  let pad=(4-bytes.length%4)%4;
+  const arr=new Uint8Array(bytes.length+pad);
+  arr.set(bytes);
+  let out="";
+  for(let i=0;i<arr.length;i+=4){
+    let num=(arr[i]<<24)|(arr[i+1]<<16)|(arr[i+2]<<8)|arr[i+3];
+    let chunk="";
+    for(let j=0;j<5;j++){chunk=String.fromCharCode(num%85+33)+chunk; num=Math.floor(num/85);}
+    out+=chunk;
+  }
+  return out.substr(0,out.length-(pad?5:0));
 }
+function base85Decode(str){
+  if(str.length%5) throw new Error("Bad Base85 length");
+  let out=[];
+  for(let i=0;i<str.length;i+=5){
+    let num=0;
+    for(let j=0;j<5;j++) num=num*85+(str.charCodeAt(i+j)-33);
+    for(let j=3;j>=0;j--) out.push((num>>(8*j))&255);
+  }
+  return new TextDecoder().decode(new Uint8Array(out));
+}
+
+function applyEncode(str,l){
+  switch(l.type){
+    case"url": return encodeURIComponent(str);
+    case"base64": return encodeBase64(str);
+    case"hex": return encodeHex(str);
+    case"rot13": return rot13(str);
+    case"caesar": return caesar(str,l.params.shift||13);
+    case"reverse": return reverseStr(str);
+    case"base85": return base85Encode(str);
+  }
 }
 function applyDecode(str,l){
-switch(l.type){
-  case"url": return decodeURIComponent(str);
-  case"base64": return decodeBase64(str);
-  case"hex": return decodeHex(str);
-  case"rot13": return rot13(str);
-  case"caesar": return caesar(str,-(l.params.shift||13));
-  case"reverse": return reverseStr(str);
-}
+  switch(l.type){
+    case"url": return decodeURIComponent(str);
+    case"base64": return decodeBase64(str);
+    case"hex": return decodeHex(str);
+    case"rot13": return rot13(str);
+    case"caesar": return caesar(str,-(l.params.shift||13));
+    case"reverse": return reverseStr(str);
+    case"base85": return base85Decode(str);
+  }
 }
 
 const input=document.getElementById("input");
 const output=document.getElementById("output");
-const errorDiv=document.getElementById("error");
 
 document.getElementById("encode-btn").addEventListener("click",()=>{
-try{
-  let txt=input.value;
-  layers.forEach(l=>txt=applyEncode(txt,l));
-  output.value=txt;
-}catch(e){alert(e.message);}
+  try{let txt=input.value; layers.forEach(l=>txt=applyEncode(txt,l)); output.value=txt;}
+  catch(e){alert(e.message);}
 });
-
 document.getElementById("decode-btn").addEventListener("click",()=>{
-try{
-  let txt=input.value;
-  for(let i=layers.length-1;i>=0;i--) txt=applyDecode(txt,layers[i]);
-  output.value=txt;
-}catch(e){alert(e.message);}
+  try{let txt=input.value; for(let i=layers.length-1;i>=0;i--) txt=applyDecode(txt,layers[i]); output.value=txt;}
+  catch(e){alert(e.message);}
 });
-
 document.getElementById("copy-btn").addEventListener("click",()=>{navigator.clipboard.writeText(output.value);});
 document.getElementById("save-btn").addEventListener("click",()=>{
   const blob=new Blob([output.value],{type:"text/plain"});
@@ -142,15 +163,9 @@ document.getElementById("save-btn").addEventListener("click",()=>{
 });
 
 // Presets
-document.getElementById("preset1").addEventListener("click",()=>{
-layers.length=0; addLayer("url"); addLayer("base64"); addLayer("hex");
-});
-document.getElementById("preset2").addEventListener("click",()=>{
-layers.length=0; addLayer("rot13"); addLayer("caesar",{shift:5});
-});
-document.getElementById("preset3").addEventListener("click",()=>{
-layers.length=0; addLayer("base64"); addLayer("reverse");
-});
+document.getElementById("preset1").addEventListener("click",()=>{layers.length=0; addLayer("url"); addLayer("base64"); addLayer("hex");});
+document.getElementById("preset2").addEventListener("click",()=>{layers.length=0; addLayer("rot13"); addLayer("caesar",{shift:5});});
+document.getElementById("preset3").addEventListener("click",()=>{layers.length=0; addLayer("base64"); addLayer("base85");});
 
 renderLayers();
 });
