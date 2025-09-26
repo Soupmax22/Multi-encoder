@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Advanced Multi-layer Encoder / Decoder</title>
+  <style>
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:#0f1724;color:#e6eef6}
+    .wrap{max-width:960px;margin:30px auto;padding:24px;background:#0b1220;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.4)}
+    h1{margin-top:0}
+    textarea{width:100%;min-height:140px;margin:8px 0;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.2);background:#061124;color:inherit;font-family:ui-monospace}
+    button,select{padding:8px 12px;margin:4px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#132034;color:inherit;cursor:pointer}
+    button.strong{background:#6ee7b7;color:#04201a;font-weight:bold;border:0}
+    .layers{margin:10px 0}
+    .layer-row{padding:6px;background:#111b2b;border-radius:6px;margin:4px 0;display:flex;justify-content:space-between;align-items:center}
+    .result{margin-top:12px}
+    .muted{color:#9aa4b2;font-size:13px}
+    .pill{background:#132034;border-radius:999px;padding:4px 10px;font-size:12px;display:inline-block;margin-left:6px}
+    .error{color:#fb7185;margin-top:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Advanced Multi-layer Encoder / Decoder</h1>
+    <p class="muted">Stack encodings (top → bottom). Decoding reverses them.</p>
+
+    <label>Input:</label>
+    <textarea id="input" placeholder="Type text to encode/decode..."></textarea>
+
+    <div>
+      <select id="layer-select">
+        <option value="url">URL Encode</option>
+        <option value="base64">Base64</option>
+        <option value="hex">Hex</option>
+        <option value="rot13">ROT13</option>
+        <option value="caesar">Caesar (shift)</option>
+        <option value="reverse">Reverse</option>
+        <option value="base85">Base85 (ASCII85)</option>
+        <option value="gzip">Gzip+Base64</option>
+      </select>
+      <input id="caesar-shift" type="number" value="13" min="1" max="25" style="width:70px;display:none"/>
+      <button id="add-layer">Add Layer</button>
+      <button id="clear-layers">Clear Layers</button>
+    </div>
+
+    <div class="layers" id="layers"></div>
+
+    <div>
+      <button id="encode-btn" class="strong">Encode</button>
+      <button id="decode-btn">Decode</button>
+      <button id="copy-btn">Copy Output</button>
+      <button id="save-btn">Save as .txt</button>
+      <span class="pill" id="layer-count">Layers: 0</span>
+    </div>
+
+    <div class="result">
+      <label>Output:</label>
+      <textarea id="output" readonly></textarea>
+      <div id="error" class="error" style="display:none"></div>
+    </div>
+
+    <h3>Presets</h3>
+    <div>
+      <button id="preset1">URL → Base64 → Hex</button>
+      <button id="preset2">ROT13 → Caesar(5)</button>
+      <button id="preset3">Base64 → Gzip</button>
+    </div>
+
+    <p class="muted">Tip: Gzip encoding produces Base64 text of compressed data.</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+  <script>
+    /* ---------- UTF-8 safe Base64/Hex ---------- */
+    function bytesToBase64(bytes){
+      let binary=''; for(let b of bytes) binary+=String.fromCharCode(b);
+      return btoa(binary);
+    }
+    function base64ToBytes(b64){
+      let bin=atob(b64), out=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i);
+      return out;
+    }
+    function base64EncodeUTF8(str){return bytesToBase64(new TextEncoder().encode(str))}
+    function base64DecodeUTF8(b64){return new TextDecoder().decode(base64ToBytes(b64))}
+    function hexEncodeUTF8(str){
+      return Array.from(new TextEncoder().encode(str)).map(b=>b.toString(16).padStart(2,"0")).join("");
+    }
+    function hexDecodeUTF8(hex){
+      if(hex.length%2) throw new Error("Bad hex length");
+      let arr=new Uint8Array(hex.length/2);
+      for(let i=0;i<hex.length;i+=2) arr[i/2]=parseInt(hex.substr(i,2),16);
+      return new TextDecoder().decode(arr);
+    }
+
+    /* ---------- ROT13 / Caesar / Reverse ---------- */
+    function rot13(s){return s.replace(/[A-Za-z]/g,c=>{
+      let b=c<="Z"?65:97;return String.fromCharCode(((c.charCodeAt(0)-b+13)%26)+b)
+    })}
+    function caesar(s,shift){return s.replace(/[A-Za-z]/g,c=>{
+      let b=c<="Z"?65:97;return String.fromCharCode(((c.charCodeAt(0)-b+shift+26)%26)+b)
+    })}
+    function reverseStr(s){return s.split("").reverse().join("")}
+
+    /* ---------- Base85 (ASCII85) ---------- */
+    function base85Encode(str){
+      const bytes=new TextEncoder().encode(str);
+      let pad=(4-bytes.length%4)%4;
+      let arr=new Uint8Array(bytes.length+pad);
+      arr.set(bytes);
+      let out="";
+      for(let i=0;i<arr.length;i+=4){
+        let num=(arr[i]<<24)|(arr[i+1]<<16)|(arr[i+2]<<8)|arr[i+3];
+        if(num===0xffffffff) num>>>0;
+        let chunk="";
+        for(let j=0;j<5;j++){chunk=String.fromCharCode(num%85+33)+chunk;num=Math.floor(num/85)}
+        out+=chunk;
+      }
+      return out.substr(0,out.length-(pad?5:0));
+    }
+    function base85Decode(str){
+      if(str.length%5) throw new Error("Bad Base85 length");
+      let out=[];
+      for(let i=0;i<str.length;i+=5){
+        let num=0;
+        for(let j=0;j<5;j++){num=num*85+(str.charCodeAt(i+j)-33)}
+        for(let j=3;j>=0;j--){out.push((num>>(8*j))&255)}
+      }
+      return new TextDecoder().decode(new Uint8Array(out));
+    }
+
+    /* ---------- Gzip+Base64 (pako) ---------- */
+    function gzipEncode(str){
+      const data = new TextEncoder().encode(str);
+      const compressed = pako.deflate(data);
+      return bytesToBase64(compressed);
+    }
+    function gzipDecode(b64){
+      const data = base64ToBytes(b64);
+      const decompressed = pako.inflate(data);
+      return new TextDecoder().decode(decompressed);
+    }
+
+    /* ---------- Layer handling ---------- */
+    const layers=[];
+    function renderLayers(){
+      const div=document.getElementById("layers"); div.innerHTML="";
+      layers.forEach((l,i)=>{
+        const row=document.createElement("div"); row.className="layer-row";
+        row.innerHTML=`<span>${l.type}${l.params.shift?`(shift=${l.params.shift})`:""}</span>
+        <span>
+          <button onclick="moveUp(${i})">↑</button>
+          <button onclick="moveDown(${i})">↓</button>
+          <button onclick="removeLayer(${i})">✕</button>
+        </span>`;
+        div.appendChild(row);
+      });
+      document.getElementById("layer-count").textContent="Layers: "+layers.length;
+    }
+    function addLayer(t,p={}){layers.push({type:t,params:p});renderLayers()}
+    function removeLayer(i){layers.splice(i,1);renderLayers()}
+    function moveUp(i){if(i>0){[layers[i-1],layers[i]]=[layers[i],layers[i-1]];renderLayers()}}
+    function moveDown(i){if(i<layers.length-1){[layers[i],layers[i+1]]=[layers[i+1],layers[i]];renderLayers()}}
+    function clearLayers(){layers.length=0;renderLayers()}
+
+    /* ---------- Apply encode/decode ---------- */
+    function applyEncode(str,l){
+      switch(l.type){
+        case"url":return encodeURIComponent(str);
+        case"base64":return base64EncodeUTF8(str);
+        case"hex":return hexEncodeUTF8(str);
+        case"rot13":return rot13(str);
+        case"caesar":return caesar(str,l.params.shift||13);
+        case"reverse":return reverseStr(str);
+        case"base85":return base85Encode(str);
+        case"gzip":return gzipEncode(str);
+      }
+    }
+    function applyDecode(str,l){
+      switch(l.type){
+        case"url":return decodeURIComponent(str);
+        case"base64":return base64DecodeUTF8(str);
+        case"hex":return hexDecodeUTF8(str);
+        case"rot13":return rot13(str);
+        case"caesar":return caesar(str,-(l.params.shift||13));
+        case"reverse":return reverseStr(str);
+        case"base85":return base85Decode(str);
+        case"gzip":return gzipDecode(str);
+      }
+    }
+
+    /* ---------- UI wiring ---------- */
+ 
